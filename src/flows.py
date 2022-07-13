@@ -7,12 +7,9 @@ import tensorflow_probability as tfp
 tfd = tfp.distributions
 tfb = tfp.bijectors
 
-#import flow_utils as futils
-#from flow_utils import ResidualBlock, AffineCoupling, trainable_lu_factorization, \
-#  SplineParams, TransferSpectra, SimpleRQSpline, ConditionalSpline3D
 from flow_utils import *
 
-class MAFFlow(tf.keras.Model):
+class MAFFlow(tf.Module):
 
     def __init__(self, d, nlayers=5, nunits=32, name=None):
         '''
@@ -27,7 +24,7 @@ class MAFFlow(tf.keras.Model):
         self.nlayers = nlayers
         self.nunits = nunits
         self.noise = tfd.MultivariateNormalDiag(loc=tf.zeros(self.d))      
-
+        self.is_built = False
         
     def build(self, input_shape):       
 
@@ -38,9 +35,9 @@ class MAFFlow(tf.keras.Model):
         bijectors.append(tfb.AffineScalar(shift0, scale0))
         for i in range(self.nlayers):
             print(i)
-            if i > self.nlayers//2: bijectors.append(tfb.RealNVP(num_masked=self.d//2, bijector_fn=AffineCoupling(shift_only=False), name='nvpaffine%d'%i))
-            else: bijectors.append(tfb.RealNVP(num_masked=self.d//2, bijector_fn=AffineCoupling(), name='nvpaffine%d'%i))
-            anet = tfb.AutoregressiveNetwork(params=2, hidden_units=[self.nunits, self.nunits], activation='relu')
+            #if i > self.nlayers//2: bijectors.append(tfb.RealNVP(num_masked=self.d//2, bijector_fn=AffineCoupling(shift_only=False), name='nvpaffine%d'%i))
+            #else: bijectors.append(tfb.RealNVP(num_masked=self.d//2, bijector_fn=AffineCoupling(), name='nvpaffine%d'%i))
+            anet = tfb.AutoregressiveNetwork(params=self.d//2, hidden_units=[self.nunits, self.nunits], activation='relu')
             abiject = tfb.MaskedAutoregressiveFlow(anet)
             bijectors.append(abiject)
             bijectors.append(tfb.Permute(np.random.permutation(np.arange(self.d).astype(int))))            
@@ -51,17 +48,49 @@ class MAFFlow(tf.keras.Model):
         # Hack to get trainable variables
         self.flow.sample(1)
         self._variable = self.flow.trainable_variables
+        #self.trainable_variables = self.flow.trainable_variables
+        self.is_built = True
         print('Built')
  
         
-    def call(self, x):
+    def __call__(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.log_prob(x)
+
+    def log_prob(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
         return self.flow.log_prob(x)
+
+    def sample(self, n=1, sample_shape=None):
+        if not self.is_built:
+            if sample_shape is None: 
+                print('Give sample shape to build the module')
+            else: 
+                self.build(sample_shape)
+                self.is_built = True
+        return self.flow.sample(n)
+
+    def forward(self, z):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.flow.bijector.forward(z)
+
+    def inverse(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.flow.inverse(x)
 
 
 
           
     
-class SplineFlow(tf.keras.Model):
+class SplineFlow(tf.Module):
 
     def __init__(self, d, nsplines=5, nlayers=2, nbins=32, nunits=32, name=None):
         '''
@@ -108,12 +137,42 @@ class SplineFlow(tf.keras.Model):
         print('Built')
  
 
-    def call(self, x):
+        
+    def __call__(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.log_prob(x)
+
+    def log_prob(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
         return self.flow.log_prob(x)
-          
+
+    def sample(self, n=1, sample_shape=None):
+        if not self.is_built:
+            if sample_shape is None: 
+                print('Give sample shape to build the module')
+            else: 
+                self.build(sample_shape)
+                self.is_built = True
+        return self.flow.sample(n)
+
+    def forward(self, z):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.flow.bijector.forward(z)
+
+    def inverse(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.flow.inverse(x)
 
         
-class AffineFlow(tf.keras.Model):
+class AffineFlow(tf.Module):
     """This is a normalizing flow using the coupling layers defined
     above."""
     def __init__(self, d, name=None):
@@ -142,9 +201,39 @@ class AffineFlow(tf.keras.Model):
         self._variable = self.flow.trainable_variables
         print('Built')
         
-    def call(self, x):
+        
+    def __call__(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.log_prob(x)
+
+    def log_prob(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
         return self.flow.log_prob(x)
 
+    def sample(self, n=1, sample_shape=None):
+        if not self.is_built:
+            if sample_shape is None: 
+                print('Give sample shape to build the module')
+            else: 
+                self.build(sample_shape)
+                self.is_built = True
+        return self.flow.sample(n)
+
+    def forward(self, z):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.flow.bijector.forward(z)
+
+    def inverse(self, x):
+        if not self.is_built:
+            self.build(x.shape)
+            self.is_built = True
+        return self.flow.inverse(x)
 
 
 
