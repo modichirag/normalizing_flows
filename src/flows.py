@@ -6,49 +6,17 @@ tfb = tfp.bijectors
 
 from flow_utils import *
 
-class MAFFlow(tf.Module):
 
-    def __init__(self, d, nlayers=5, nunits=32, name=None):
+
+
+class Flow(tf.Module):
+
+    def __init__(self, name=None):
         '''
         Parameters:
         ----------
-        d : dimension
-        nlayers : number of autoregressive layers, default 5
-        nunits : number of units in hidden layers, default 32
         '''
-        super(MAFFlow, self).__init__(name=name)
-        self.d = d
-        self.nlayers = nlayers
-        self.nunits = nunits
-        self.noise = tfd.MultivariateNormalDiag(loc=tf.zeros(self.d))      
-        self.is_built = False
-        
-    def build(self, input_shape):       
-
-        bijectors = []
-        scale0, scale1 = tf.Variable(tf.ones(self.d), name='scale0'), tf.Variable(tf.ones(self.d), name='scale1')
-        shift0, shift1 = tf.Variable(tf.zeros(self.d), name='shift0'), tf.Variable(tf.zeros(self.d), name='shift1')
-    
-        bijectors.append(tfb.AffineScalar(shift0, scale0))
-        for i in range(self.nlayers):
-            print(i)
-            #if i > self.nlayers//2: bijectors.append(tfb.RealNVP(num_masked=self.d//2, bijector_fn=AffineCoupling(shift_only=False), name='nvpaffine%d'%i))
-            #else: bijectors.append(tfb.RealNVP(num_masked=self.d//2, bijector_fn=AffineCoupling(), name='nvpaffine%d'%i))
-            anet = tfb.AutoregressiveNetwork(params=self.d//2, hidden_units=[self.nunits, self.nunits], activation='relu')
-            abiject = tfb.MaskedAutoregressiveFlow(anet)
-            bijectors.append(abiject)
-            bijectors.append(tfb.Permute(np.random.permutation(np.arange(self.d).astype(int))))            
-
-        bijectors.append(tfb.AffineScalar(shift1, scale1))    
-        self.bijector = tfb.Chain(bijectors)
-        self.flow = tfd.TransformedDistribution(self.noise, self.bijector)
-        # Hack to get trainable variables
-        self.flow.sample(1)
-        self._variable = self.flow.trainable_variables
-        #self.trainable_variables = self.flow.trainable_variables
-        self.is_built = True
-        print('Built')
- 
+        super(Flow, self).__init__(name=name)
         
     def __call__(self, x):
         if not self.is_built:
@@ -85,9 +53,67 @@ class MAFFlow(tf.Module):
 
 
 
+class MAFFlow(Flow):
+
+    def __init__(self, d, nlayers=5, nunits=32, name=None, fitmean=False, fitscale=False, mu=0, scale=1.):
+        '''
+        Parameters:
+        ----------
+        d : dimension
+        nlayers : number of autoregressive layers, default 5
+        nunits : number of units in hidden layers, default 32
+        '''
+        super(MAFFlow, self).__init__(name=name)
+        self.d = d
+        self.nlayers = nlayers
+        self.nunits = nunits
+        self.is_built = False
+        
+        if fitmean:
+          self.loc = tf.Variable(tf.zeros([d])*0+mu, name='loc')
+        else:
+          self.loc = tf.constant(tf.zeros([d])+mu, name='loc')
+        #
+        if fitscale:
+            self.scale = tf.Variable(tf.ones([d])*scale, name='scale')
+        else:
+          self.scale = tf.constant(tf.ones([d])*scale, name='scale')
+        
+        self.noise = tfd.MultivariateNormalDiag(loc=self.loc, scale_diag=self.scale)
+
+        
+    def build(self, input_shape):       
+
+        bijectors = []
+        scale0, scale1 = tf.Variable(tf.zeros(self.d), name='scale0'), tf.Variable(tf.zeros(self.d), name='scale1')
+        shift0, shift1 = tf.Variable(tf.zeros(self.d), name='shift0'), tf.Variable(tf.zeros(self.d), name='shift1')
+    
+        #bijectors.append(tfb.AffineScalar(shift0, scale0))
+        bijectors.append(tfb.Shift(shift0)(tfb.Scale(log_scale=scale0)))
+        for i in range(self.nlayers):
+            print(i)
+            #bijectors.append(tfb.Shift(self.shift[i])(tfb.Scale(log_scale=self.scale[i])))
+            anet = tfb.AutoregressiveNetwork(params=self.d//2, hidden_units=[self.nunits, self.nunits], activation='relu')
+            abiject = tfb.MaskedAutoregressiveFlow(anet)
+            bijectors.append(abiject)
+            bijectors.append(tfb.Permute(np.random.permutation(np.arange(self.d).astype(int))))            
+
+        #bijectors.append(tfb.AffineScalar(shift1, scale1))    
+        bijectors.append(tfb.Shift(shift1)(tfb.Scale(log_scale=scale1)))
+        self.bijector = tfb.Chain(bijectors)
+        self.flow = tfd.TransformedDistribution(self.noise, self.bijector)
+        # Hack to get trainable variables
+        self.flow.sample(1)
+        self._variable = self.flow.trainable_variables
+        #self.trainable_variables = self.flow.trainable_variables
+        self.is_built = True
+        print('Built')
+ 
+
+
           
     
-class SplineFlow(tf.Module):
+class SplineFlow(Flow):
 
     def __init__(self, d, nsplines=5, nlayers=2, nbins=32, nunits=32, name=None):
         '''
@@ -135,47 +161,15 @@ class SplineFlow(tf.Module):
  
 
         
-    def __call__(self, x):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.log_prob(x)
-
-    def log_prob(self, x):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.flow.log_prob(x)
-
-    def sample(self, n=1, sample_shape=None):
-        if not self.is_built:
-            if sample_shape is None: 
-                print('Give sample shape to build the module')
-            else: 
-                self.build(sample_shape)
-                self.is_built = True
-        return self.flow.sample(n)
-
-    def forward(self, z):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.flow.bijector.forward(z)
-
-    def inverse(self, x):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.flow.inverse(x)
-
         
-class AffineFlow(tf.Module):
+class AffineFlow(Flow):
     """This is a normalizing flow using the coupling layers defined
     above."""
     def __init__(self, d, name=None):
         super().__init__(name=name)
         self.d=d
         self.noise = tfd.MultivariateNormalDiag(tf.zeros(self.d),tf.ones(self.d))
+        self.is_built = False
 # 
     def build(self, input_shape):
         self.chain = tfb.Chain([
@@ -196,41 +190,10 @@ class AffineFlow(tf.Module):
         self.flow.sample(1)
         self.bijector = self.chain
         self._variable = self.flow.trainable_variables
+        self.is_built = True
         print('Built')
         
         
-    def __call__(self, x):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.log_prob(x)
-
-    def log_prob(self, x):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.flow.log_prob(x)
-
-    def sample(self, n=1, sample_shape=None):
-        if not self.is_built:
-            if sample_shape is None: 
-                print('Give sample shape to build the module')
-            else: 
-                self.build(sample_shape)
-                self.is_built = True
-        return self.flow.sample(n)
-
-    def forward(self, z):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.flow.bijector.forward(z)
-
-    def inverse(self, x):
-        if not self.is_built:
-            self.build(x.shape)
-            self.is_built = True
-        return self.flow.inverse(x)
 
 
 
